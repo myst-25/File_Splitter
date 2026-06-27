@@ -1,0 +1,88 @@
+name: Build and Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      versionName:
+        description: 'Version Name (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Version and Changelog
+        id: extract
+        run: |
+          VERSION_TAG="v${{ github.event.inputs.versionName }}"
+          
+          # Automatically get commit messages since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            CHANGELOG=$(git log -1 --pretty=format:"- %s")
+          else
+            CHANGELOG=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s")
+            # Fallback to latest commit if nothing found (e.g. running on the same commit)
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG=$(git log -1 --pretty=format:"- %s")
+            fi
+          fi
+          
+          echo "version_tag=$VERSION_TAG" >> $GITHUB_ENV
+          
+          # Handle multiline string for GitHub Environment Variables
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "changelog<<$EOF" >> $GITHUB_ENV
+          echo "$CHANGELOG" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.version_tag }}
+          name: Release ${{ env.version_tag }}
+          body: ${{ env.changelog }}
+          files: |
+            main.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send Files to Telegram Group
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: '-1003782580194'
+          RELEASE_URL: 'https://github.com/myst-25/File_Splitter/releases/tag/${{ env.version_tag }}'
+          REPO_URL: 'https://github.com/myst-25/File_Splitter'
+        run: |
+          CAPTION="<b>✂️ New Advanced File Splitter Release: ${{ env.version_tag }}</b>
+          <i>A professional, cross-platform Python GUI for splitting large text and markdown files.</i>
+          ⚠️ <b>Note: This tool is only for files that contain text!</b>
+          
+          <b>📝 Changelog:</b>
+          ${{ env.changelog }}
+          
+          📦 <a href=\"$REPO_URL\">GitHub Repository</a>
+          🔗 <a href=\"$RELEASE_URL\">Download / View Release</a>
+          
+          <i>Download the script below!</i>"
+          
+          # Safely escape the caption for JSON using jq
+          MEDIA_JSON=$(jq -n --arg cap "$CAPTION" '[
+            {"type":"document", "media":"attach://main_file", "caption":$cap, "parse_mode":"HTML"}
+          ]')
+          
+          # Send file to telegram
+          curl -v -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup" \
+            -F chat_id="${TELEGRAM_CHAT_ID}" \
+            -F media="$MEDIA_JSON" \
+            -F main_file="@main.py"
