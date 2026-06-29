@@ -6,9 +6,8 @@ import webbrowser
 import base64
 
 try:
-    with open(os.path.join(os.path.dirname(__file__), 'dev_avatar.b64'), 'r') as f:
-        DEV_AVATAR_B64 = f.read().replace('\n', '')
-except FileNotFoundError:
+    from avatar_data import DEV_AVATAR_B64
+except ImportError:
     DEV_AVATAR_B64 = ""
 
 class FileSplitterApp:
