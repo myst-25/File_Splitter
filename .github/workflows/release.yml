@@ -9,7 +9,55 @@ on:
         default: '1.0.0'
 
 jobs:
-  build-and-release:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: File_Splitter_Windows.exe
+            asset_name: File_Splitter_Windows.exe
+          - os: macos-latest
+            artifact_name: File_Splitter_macOS
+            asset_name: File_Splitter_macOS.dmg
+          - os: ubuntu-latest
+            artifact_name: File_Splitter_Linux
+            asset_name: File_Splitter_Linux
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build Executable (Windows/Linux)
+        if: matrix.os != 'macos-latest'
+        run: |
+          pyinstaller --onefile --windowed --name="${{ matrix.artifact_name }}" main.py
+
+      - name: Build Executable (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          pyinstaller --onefile --windowed --name="${{ matrix.artifact_name }}" main.py
+          hdiutil create -volname "File_Splitter" -srcfolder "dist/${{ matrix.artifact_name }}.app" -ov -format UDZO "dist/${{ matrix.asset_name }}"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+
+  release:
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,18 +68,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare Assets
+        run: |
+          mkdir -p release_assets
+          mv artifacts/File_Splitter_Windows.exe/File_Splitter_Windows.exe release_assets/
+          mv artifacts/File_Splitter_Linux/File_Splitter_Linux release_assets/
+          mv artifacts/File_Splitter_macOS.dmg/File_Splitter_macOS.dmg release_assets/
+          chmod +x release_assets/File_Splitter_Linux
+
       - name: Extract Version and Changelog
         id: extract
         run: |
           VERSION_TAG="v${{ github.event.inputs.versionName }}"
           
-          # Automatically get commit messages since last tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -z "$LAST_TAG" ]; then
             CHANGELOG=$(git log -1 --pretty=format:"- %s")
           else
             CHANGELOG=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s")
-            # Fallback to latest commit if nothing found (e.g. running on the same commit)
             if [ -z "$CHANGELOG" ]; then
               CHANGELOG=$(git log -1 --pretty=format:"- %s")
             fi
@@ -39,7 +98,6 @@ jobs:
           
           echo "version_tag=$VERSION_TAG" >> $GITHUB_ENV
           
-          # Handle multiline string for GitHub Environment Variables
           EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
           echo "changelog<<$EOF" >> $GITHUB_ENV
           echo "$CHANGELOG" >> $GITHUB_ENV
@@ -53,7 +111,9 @@ jobs:
           name: Release ${{ env.version_tag }}
           body: ${{ env.changelog }}
           files: |
-            main.py
+            release_assets/File_Splitter_Windows.exe
+            release_assets/File_Splitter_Linux
+            release_assets/File_Splitter_macOS.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -74,15 +134,17 @@ jobs:
           📦 <a href=\"$REPO_URL\">GitHub Repository</a>
           🔗 <a href=\"$RELEASE_URL\">Download / View Release</a>
           
-          <i>Download the script below!</i>"
+          <i>Download the executable for your OS below!</i>"
           
-          # Safely escape the caption for JSON using jq
           MEDIA_JSON=$(jq -n --arg cap "$CAPTION" '[
-            {"type":"document", "media":"attach://main_file", "caption":$cap, "parse_mode":"HTML"}
+            {"type":"document", "media":"attach://windows_file", "caption":$cap, "parse_mode":"HTML"},
+            {"type":"document", "media":"attach://mac_file"},
+            {"type":"document", "media":"attach://linux_file"}
           ]')
           
-          # Send file to telegram
           curl -v -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup" \
             -F chat_id="${TELEGRAM_CHAT_ID}" \
             -F media="$MEDIA_JSON" \
-            -F main_file="@main.py"
+            -F windows_file="@release_assets/File_Splitter_Windows.exe" \
+            -F mac_file="@release_assets/File_Splitter_macOS.dmg" \
+            -F linux_file="@release_assets/File_Splitter_Linux"
