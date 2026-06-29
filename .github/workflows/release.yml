@@ -134,12 +134,12 @@ jobs:
           📦 <a href=\"$REPO_URL\">GitHub Repository</a>
           🔗 <a href=\"$RELEASE_URL\">Download / View Release</a>
           
-          <i>Download the executable for your OS below!</i>"
+          <i>Download the executable for your OS above!</i>"
           
           MEDIA_JSON=$(jq -n --arg cap "$CAPTION" '[
-            {"type":"document", "media":"attach://windows_file", "caption":$cap, "parse_mode":"HTML"},
+            {"type":"document", "media":"attach://windows_file"},
             {"type":"document", "media":"attach://mac_file"},
-            {"type":"document", "media":"attach://linux_file"}
+            {"type":"document", "media":"attach://linux_file", "caption":$cap, "parse_mode":"HTML"}
           ]')
           
           curl -v -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup" \
